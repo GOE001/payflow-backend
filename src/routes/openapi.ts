@@ -2512,7 +2512,10 @@ function componentSchemas(): Record<string, SchemaObject> {
         status: { type: "string", enum: ["delivered", "pending", "failed"] },
         statusCode: { type: ["integer", "null"], description: "The endpoint's HTTP status; null when no response arrived." },
         latencyMs: { type: "integer" },
-        error: { type: ["string", "null"] },
+        error: {
+          type: ["string", "null"],
+          description: "Sanitized failure category; never includes receiver response or transport text.",
+        },
         nextRetryAt: { type: ["integer", "null"], description: "Unix seconds of the scheduled retry, when `pending`." },
       },
       required: ["deliveryId", "status", "statusCode", "latencyMs", "error", "nextRetryAt"],
@@ -2530,7 +2533,10 @@ function componentSchemas(): Record<string, SchemaObject> {
           description: "The delivery's state after this attempt; `pending` means a retry is scheduled.",
         },
         statusCode: { type: ["integer", "null"] },
-        error: { type: ["string", "null"] },
+        error: {
+          type: ["string", "null"],
+          description: "Sanitized failure category; never includes receiver response or transport text.",
+        },
         nextRetryAt: { type: ["integer", "null"], description: "Unix seconds." },
         attemptedAt: { type: "integer", description: "Unix seconds." },
       },

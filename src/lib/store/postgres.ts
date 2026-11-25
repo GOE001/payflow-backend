@@ -51,6 +51,9 @@ export function explainCheckoutTimeout(err: unknown, settings: PoolSettings): un
 }
 
 const SCHEMA = `
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version INTEGER PRIMARY KEY
+);
 CREATE TABLE IF NOT EXISTS events (
   event_id TEXT PRIMARY KEY,
   contract_id TEXT NOT NULL,
@@ -400,6 +403,13 @@ export class PostgresStorage extends PgExecutor implements Storage {
     const pool = new Pool(poolConfigFor(connectionString, schema, settings));
     const storage = new PostgresStorage(pool, undefined, settings);
     await storage.run(SCHEMA);
+    const webhookResponseRedaction = await storage.get<{ version: number }>(
+      "SELECT version FROM schema_migrations WHERE version = 1",
+    );
+    if (!webhookResponseRedaction) {
+      await storage.run("UPDATE webhook_deliveries SET response_body = NULL WHERE response_body IS NOT NULL");
+      await storage.run("INSERT INTO schema_migrations (version) VALUES (1) ON CONFLICT DO NOTHING");
+    }
     await storage.run(`
       INSERT INTO plan_active_subscribers (plan_id, subscriber, mandate_count)
       SELECT plan_id, subscriber, COUNT(*) FROM mandates

@@ -239,13 +239,13 @@ link-local, metadata, reserved and other non-public addresses are refused.
 Existing registrations are checked at delivery time as well. Keep network
 egress restrictions in place as defense in depth.
 
-### 7.4 Webhook response bodies are read and stored without a size cap
+### 7.4 Webhook delivery responses and errors can contain credentials
 
-A delivery reads the receiver's whole response (`res.text()`) and stores it in
-`webhook_deliveries.response_body`. The 15-second timeout bounds the time, not
-the size, so a hostile receiver can return a large body on every attempt and
-grow memory and the database. The body is never returned by the API.
-**Mitigation:** none in configuration; watch the database size.
+A receiver can echo signing secrets or tokens in its response body, and
+transport errors can include credential-bearing URLs. Delivery attempts now
+discard response bodies and store only a fixed error category rather than
+untrusted error text. Startup migration clears response bodies saved by older
+versions. Delivery status, HTTP status, and retry timing remain available.
 
 ### 7.5 `/health` publishes the RPC endpoint URLs
 

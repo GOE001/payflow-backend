@@ -247,13 +247,13 @@ describe("webhook retry schedule and dead-lettering (#275)", () => {
     { name: "5xx response", answer: 500, statusCode: 500, error: "delivery failed" },
     { name: "4xx response", answer: 410, statusCode: 410, error: "delivery failed" },
     { name: "redirect (not followed)", answer: 302, statusCode: 302, error: "delivery failed" },
-    { name: "network error", answer: "throw", statusCode: null, error: "connect ECONNREFUSED" },
+    { name: "network error", answer: "throw", statusCode: null, error: "delivery request failed" },
     {
       name: "host re-resolving to a private address",
       answer: 200,
       lookup: async () => [{ address: "10.0.0.7", family: 4 }],
       statusCode: null,
-      error: "webhook URL must resolve only to public addresses",
+      error: "delivery request failed",
     },
   ];
   for (const mode of failureModes) {

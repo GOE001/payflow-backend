@@ -20,6 +20,30 @@ function queryPlan(db: Db, sql: string, args: unknown[] = []): string {
 }
 
 describe("forward-only schema migrations", () => {
+  test("redacts stored webhook response bodies exactly once", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
+      CREATE TABLE webhook_deliveries (response_body TEXT);
+      INSERT INTO webhook_deliveries VALUES ('secret and token from an old response');
+    `);
+
+    migrate(db);
+    assert.equal(
+      (db.prepare("SELECT response_body FROM webhook_deliveries").get() as { response_body: string | null }).response_body,
+      null,
+    );
+
+    db.prepare("INSERT INTO webhook_deliveries VALUES (?)").run("new value");
+    migrate(db);
+    assert.equal(
+      (db.prepare("SELECT response_body FROM webhook_deliveries WHERE response_body IS NOT NULL").get() as {
+        response_body: string;
+      }).response_body,
+      "new value",
+    );
+    db.close();
+  });
+
   test("adds current columns without changing legacy rows or columns, and is repeatable", () => {
     const db = new DatabaseSync(":memory:");
     db.exec(`

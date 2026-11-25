@@ -20,9 +20,8 @@ import type { Storage } from "./store/types.ts";
  * INSERT OR IGNORE, so replaying a ledger range cannot record the same
  * event — or the same departure — twice.
  *
- * Schema changes are forward-only. Startup migrations add columns and indexes
- * without dropping or rewriting existing data; changes that cannot follow that
- * rule need a separately planned migration and rollout.
+ * Schema changes are forward-only. Startup migrations add columns and indexes;
+ * the webhook-response redaction migration is the one intentional data purge.
  */
 const SCHEMA = `
 
@@ -411,6 +410,9 @@ const ADDED_INDEXES: ReadonlyArray<[table: string, name: string, columns: string
 
 export function migrate(db: DatabaseSync): void {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version INTEGER PRIMARY KEY
+    );
     CREATE TABLE IF NOT EXISTS plan_active_subscribers (
       plan_id INTEGER NOT NULL,
       subscriber TEXT NOT NULL,
@@ -440,6 +442,20 @@ export function migrate(db: DatabaseSync): void {
       .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
       .get(table);
     if (exists) db.exec(`CREATE INDEX IF NOT EXISTS ${name} ON ${table}(${columns})`);
+  }
+
+  // Version 1 removes receiver-controlled response text left by older builds.
+  const webhookResponseRedaction = db
+    .prepare("SELECT 1 FROM schema_migrations WHERE version = 1")
+    .get();
+  if (!webhookResponseRedaction) {
+    const hasDeliveries = db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'webhook_deliveries'")
+      .get();
+    if (hasDeliveries) {
+      db.exec("UPDATE webhook_deliveries SET response_body = NULL WHERE response_body IS NOT NULL");
+    }
+    db.prepare("INSERT INTO schema_migrations (version) VALUES (1)").run();
   }
 
   // Seed these additive projections for databases created before the tables

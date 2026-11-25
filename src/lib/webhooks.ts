@@ -145,11 +145,9 @@ function postToPinnedAddress(
     request.on("error", reject);
     request.on("response", (response) => {
       const status = response.statusCode ?? 0;
-      let body = "";
-      response.setEncoding("utf8");
-      response.on("data", (chunk: string) => { body += chunk; });
       response.on("error", reject);
-      response.on("end", () => resolve({ status, ok: status >= 200 && status < 300, text: async () => body }));
+      response.on("end", () => resolve({ status, ok: status >= 200 && status < 300 }));
+      response.resume();
     });
     if (typeof init.body === "string") request.write(init.body);
     request.end();
@@ -186,7 +184,7 @@ export interface Webhook {
 interface FetchResponse {
   status: number;
   ok: boolean;
-  text: () => Promise<string>;
+  body?: { cancel: () => Promise<void> } | null;
 }
 
 interface DeliveryRow {
@@ -197,7 +195,6 @@ interface DeliveryRow {
   attempt: number;
   status: string;
   http_status: number | null;
-  response_body: string | null;
   error: string | null;
   payload: string;
   retry_at: number;
@@ -536,7 +533,6 @@ export class WebhookDispatcher {
       attempt: number;
       status: string;
       http_status: number | null;
-      response_body: string | null;
       error: string | null;
       payload: string;
       retry_at: number;
@@ -548,7 +544,7 @@ export class WebhookDispatcher {
       previous_secret_expires_at: number | null;
     }>(
         `SELECT d.id, d.webhook_id, d.event_id, d.idempotency_key, d.attempt, d.status,
-                d.http_status, d.response_body, d.error, d.payload, d.retry_at, d.created_at,
+                d.http_status, d.error, d.payload, d.retry_at, d.created_at,
                 w.merchant, w.url, w.secret, w.previous_secret, w.previous_secret_expires_at
            FROM webhook_deliveries d
            JOIN webhooks w ON w.id = d.webhook_id
@@ -566,7 +562,6 @@ export class WebhookDispatcher {
         attempt: row.attempt,
         status: row.status,
         http_status: row.http_status,
-        response_body: row.response_body,
         error: row.error,
         payload: row.payload,
         retry_at: row.retry_at,
@@ -710,7 +705,6 @@ export class WebhookDispatcher {
         attempt: 1,
         status: "pending",
         http_status: null,
-        response_body: null,
         error: null,
         payload,
         retry_at: now,
@@ -726,7 +720,6 @@ export class WebhookDispatcher {
   private async attempt(delivery: DeliveryRow, webhook: WebhookRow): Promise<AttemptOutcome> {
     const now = Math.floor(Date.now() / 1000);
     let httpStatus: number | null = null;
-    let responseBody = "";
     let error: string | null = null;
     let ok = false;
     const started = performance.now();
@@ -748,9 +741,16 @@ export class WebhookDispatcher {
         : await postToPinnedAddress(target.url, target.addresses, init);
       httpStatus = res.status;
       ok = res.ok;
-      responseBody = await res.text();
-    } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
+      try {
+        await res.body?.cancel();
+      } catch {
+        logger.debug(
+          { webhookId: webhook.id, status: httpStatus },
+          "could not discard webhook response body",
+        );
+      }
+    } catch {
+      error = "delivery request failed";
     }
     const latencyMs = Math.round(performance.now() - started);
 
@@ -758,15 +758,15 @@ export class WebhookDispatcher {
     const nextAttempt = delivery.attempt + 1;
     if (ok) {
       await this.db.run(
-        `UPDATE webhook_deliveries SET status = 'delivered', http_status = ?, response_body = ?, error = NULL WHERE id = ?`,
-        [httpStatus, responseBody, delivery.id],
+        `UPDATE webhook_deliveries SET status = 'delivered', http_status = ?, response_body = NULL, error = NULL WHERE id = ?`,
+        [httpStatus, delivery.id],
       );
       outcome = { status: "delivered", statusCode: httpStatus, latencyMs, error: null, nextRetryAt: null };
     } else if (nextAttempt > MAX_ATTEMPTS) {
       const finalError = error ?? "delivery failed";
       await this.db.run(
-        `UPDATE webhook_deliveries SET status = 'failed', http_status = ?, response_body = ?, error = ? WHERE id = ?`,
-        [httpStatus, responseBody, finalError, delivery.id],
+        `UPDATE webhook_deliveries SET status = 'failed', http_status = ?, response_body = NULL, error = ? WHERE id = ?`,
+        [httpStatus, finalError, delivery.id],
       );
       await this.db.run(
         `UPDATE webhooks SET failed = 1, failures = failures + 1, last_attempt = ?, last_status = ? WHERE id = ?`,
@@ -789,9 +789,9 @@ export class WebhookDispatcher {
       const nextRetryAt = now + backoffSeconds(nextAttempt);
       await this.db.run(
         `UPDATE webhook_deliveries
-           SET attempt = ?, retry_at = ?, status = 'pending', error = ?, http_status = ?, response_body = ?
+           SET attempt = ?, retry_at = ?, status = 'pending', error = ?, http_status = ?, response_body = NULL
          WHERE id = ?`,
-        [nextAttempt, nextRetryAt, error, httpStatus, responseBody, delivery.id],
+        [nextAttempt, nextRetryAt, error, httpStatus, delivery.id],
       );
       await this.db.run(
         `UPDATE webhooks SET last_attempt = ?, last_status = ?, failures = failures + 1 WHERE id = ?`,

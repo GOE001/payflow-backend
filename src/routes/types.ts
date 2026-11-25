@@ -578,6 +578,7 @@ export interface WebhookTestResult {
   /** The endpoint's HTTP status; null when no response arrived. */
   statusCode: number | null;
   latencyMs: number;
+  /** Sanitized failure category; never contains receiver or transport text. */
   error: string | null;
   nextRetryAt: number | null;
 }
@@ -592,6 +593,7 @@ export interface WebhookDelivery {
   attempt: number;
   status: WebhookDeliveryStatus;
   statusCode: number | null;
+  /** Sanitized failure category; never contains receiver or transport text. */
   error: string | null;
   /** Unix seconds of the retry this attempt scheduled; null unless `pending`. */
   nextRetryAt: number | null;
